@@ -19,7 +19,8 @@
 # limitations under the License.
 #
 
-require 'chef/cookbook_loader'
+require 'chef/cookbook_version'
+require 'chef/db_model/cookbook_version'
 require 'chef/cookbook/metadata'
 
 class Cookbooks < Application
@@ -58,16 +59,18 @@ class Cookbooks < Application
   #   }
   # }
   def index_010
-    cookbook_list = Chef::CookbookVersion.cdb_list
-    # cookbook_list is in the format of {"apache2" => [0.0.1, 0.0.0]} where the version numbers are DepSelector::Version objects
+    # cookbook_list is in the format of {"apache2" => [0.0.1, 0.0.0]} where the version numbers are Chef::Version objects
     num_versions = num_versions!
-    display(cookbook_list.inject({}) {|res, (cookbook_name, versions)|
-      versions = versions.map{ |x| DepSelector::Version.new(x) }.sort.reverse.map{ |x| x.to_s }
-      res[cookbook_name] = expand_cookbook_urls(cookbook_name, versions, num_versions)
+    #require 'pp'
+    #pp :with_version_by_name => Chef::DBModel::CookbookVersion.with_version_by_name
+    display(Chef::DBModel::CookbookVersion.with_version_by_name.inject({}) {|res, (name, version_list)|
+      versions = version_list.sort.reverse.map(&:to_s)
+      res[name] = expand_cookbook_urls(name, versions, num_versions)
       res
     })
   end
 
+  # TODO: convert to SQL/AR!!
   # GET /cookbooks
   #
   # returns data in the format of:
@@ -85,9 +88,9 @@ class Cookbooks < Application
   end
 
   def index_recipes
-    recipes_with_versions = Chef::CookbookVersion.cdb_list(true).inject({}) do|memo, f|
+    recipes_with_versions = Chef::DBModel::CookbookVersion.all.inject({}) do|memo, f|
       memo[f.name] ||= {}
-      memo[f.name][f.version] = f.recipe_filenames_by_name.keys
+      memo[f.name][f[:version]] = f.domain_object.recipe_filenames_by_name.keys
       memo
     end
     display recipes_with_versions
@@ -110,10 +113,10 @@ class Cookbooks < Application
   #   }
   # }
   def show_versions_010
-    versions = Chef::CookbookVersion.cdb_by_name(cookbook_name)
-    raise NotFound, "Cannot find a cookbook named #{cookbook_name}" unless versions && versions.size > 0
+    versions = Chef::DBModel::CookbookVersion.by_name(cookbook_name).with_name_and_version.all
+    raise NotFound, "Cannot find a cookbook named #{cookbook_name}" if versions.empty?
     num_versions = num_versions!("all")
-    cb_versions = versions[cookbook_name].map{ |x| DepSelector::Version.new(x) }.sort.reverse.map{ |x| x.to_s }
+    cb_versions = versions.sort.reverse.map{ |v| v[:version] }
     display({ cookbook_name => expand_cookbook_urls(cookbook_name, cb_versions, num_versions) })
   end
 
@@ -129,18 +132,41 @@ class Cookbooks < Application
   end
 
   def show
-    cookbook = get_cookbook_version(cookbook_name, cookbook_version)
-    display cookbook.generate_manifest_with_urls { |opts| absolute_url(:cookbook_file, opts) }
+    cookbook = if cookbook_version[/latest$/]
+      Chef::DBModel::CookbookVersion.latest_by_name(cookbook_name)
+    else
+      Chef::DBModel::CookbookVersion.by_name(cookbook_name).by_version(cookbook_version).first
+    end
+
+    raise NotFound, "Cannot find version '#{cookbook_version}' of cookbook '#{cookbook_name}'" unless cookbook
+    display cookbook.domain_object.generate_manifest_with_urls { |opts| absolute_url(:cookbook_file, opts) }
   end
 
   def show_file
-    cookbook = get_cookbook_version(cookbook_name, cookbook_version)
+    db_object = if cookbook_version[/latest$/]
+      Chef::DBModel::CookbookVersion.latest_by_name(cookbook_name)
+    else
+      Chef::DBModel::CookbookVersion.by_name(cookbook_name).by_version(cookbook_version).first
+    end
+
+    raise NotFound, "Cannot find version '#{cookbook_version}' of cookbook '#{cookbook_name}'" unless db_object
+
+    cookbook = db_object.domain_object
 
     checksum = params[:checksum]
-    raise NotFound, "Cookbook #{cookbook_name} version #{cookbook_version} does not contain a file with checksum #{checksum}" unless cookbook.checksums.keys.include?(checksum)
+
+    unless cookbook.checksums.keys.include?(checksum)
+      raise NotFound, "Cookbook #{cookbook_name} version #{cookbook_version} does not contain a file with checksum #{checksum}"
+    end
 
     filename = Chef::Checksum.new(checksum).file_location
-    raise InternalServerError, "File with checksum #{checksum} not found in the repository (this should not happen)" unless File.exists?(filename)
+    unless File.exists?(filename)
+      msg=<<-EOM
+File with checksum #{checksum} not found in the repository. Check your server's 'checksum_path' setting.
+If you deleted the file, you will need to purge this cookbook (#{cookbook_name}) and re-upload.
+EOM
+      raise InternalServerError, msg
+    end
 
     send_file(filename)
   end
@@ -156,13 +182,9 @@ class Cookbooks < Application
       raise(BadRequest, "You said the cookbook was version #{params['inflated_object'].version}, but the URL says it should be #{cookbook_version}.")
     end
 
-    begin
-      cookbook = Chef::CookbookVersion.cdb_load(cookbook_name, cookbook_version)
-      cookbook.manifest = params['inflated_object'].manifest
-    rescue Chef::Exceptions::CouchDBNotFound => e
-      Chef::Log.debug("Cookbook #{cookbook_name} version #{cookbook_version} does not exist")
-      cookbook = params['inflated_object']
-    end
+    cookbook = params['inflated_object']
+    db_object = Chef::DBModel::CookbookVersion.for(cookbook)
+    self.status = 201 if db_object.new_record?
 
     if cookbook.frozen_version? && params[:force].nil?
       raise Conflict, "The cookbook #{cookbook.name} at version #{cookbook.version} is frozen. Use the 'force' option to override."
@@ -177,47 +199,37 @@ class Cookbooks < Application
         checksum = manifest_record[:checksum]
         path = manifest_record[:path]
 
-        begin
-          checksum_obj = Chef::Checksum.cdb_load(checksum)
-        rescue Chef::Exceptions::CouchDBNotFound => cdbx
-          checksum_obj = nil
+        unless Chef::DBModel::Checksum.by_checksum(checksum).exists?
+          raise BadRequest, "Manifest has checksum #{checksum} (path #{path}) but it hasn't yet been uploaded"
         end
-
-        raise BadRequest, "Manifest has checksum #{checksum} (path #{path}) but it hasn't yet been uploaded" unless checksum_obj
       end
     end
 
-    raise InternalServerError, "Error saving cookbook" unless cookbook.cdb_save
-
-    display cookbook
+    db_object.save!
+    self.content_type = :json
+    db_object.serialized_object
   end
 
   def destroy
-    begin
-      cookbook = get_cookbook_version(cookbook_name, cookbook_version)
-    rescue ArgumentError => e
+    unless @db_object = Chef::DBModel::CookbookVersion.by_name(cookbook_name).by_version(cookbook_version).first
       raise NotFound, "Cannot find a cookbook named #{cookbook_name} with version #{cookbook_version}"
     end
 
+
     if params["purge"] == "true"
-      display cookbook.purge
-    else
-      display cookbook.cdb_destroy
-    end
-  end
+      @cookbook = @db_object.domain_object
+      cksums = Chef::DBModel::Checksum.by_checksum(@cookbook.checksums.keys).all
 
-  private
+      Chef::DBModel::CookbookVersion.transaction do
+        Chef::DBModel::Checksum.by_checksum(@cookbook.checksums.keys).delete_all
+      end
 
-  def get_cookbook_version(name, version)
-    Chef::CookbookVersion.cdb_load(name, version)
-  rescue Chef::Exceptions::CouchDBNotFound => e
-    raise NotFound, "Cannot find a cookbook named #{name} with version #{version}"
-  rescue Net::HTTPServerException => e
-    if e.to_s =~ /^404/
-      raise NotFound, "Cannot find a cookbook named #{name} with version #{version}"
-    else
-      raise
+      cksums.each { |c| c.domain_object.purge }
     end
+
+    @db_object.delete
+    self.content_type = :json
+    @db_object.serialized_object
   end
 
 end

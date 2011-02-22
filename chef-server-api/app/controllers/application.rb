@@ -23,6 +23,7 @@ require "chef/mixin/checksum"
 require "chef/cookbook_loader"
 require "mixlib/authentication/signatureverification"
 require 'chef/json_compat'
+require 'chef/db_model/api_client'
 
 class Application < Merb::Controller
 
@@ -36,7 +37,7 @@ class Application < Merb::Controller
       username = authenticator.user_id
       Chef::Log.info("Authenticating client #{username}")
 
-      user = Chef::ApiClient.cdb_load(username)
+      user = Chef::DBModel::ApiClient.by_name(username).first.domain_object
       user_key = OpenSSL::PKey::RSA.new(user.public_key)
       Chef::Log.debug "Authenticating Client:\n #{user.inspect}\n"
 

@@ -16,8 +16,11 @@
 # limitations under the License.
 #
 
+require 'pp'
 require 'chef/sandbox'
+require 'chef/db_model/sandbox'
 require 'chef/checksum'
+require 'chef/db_model/checksum'
 
 # Sandboxes are used to upload files to the server (e.g., cookbook upload).
 class Sandboxes < Application
@@ -30,7 +33,7 @@ class Sandboxes < Application
   include Merb::TarballHelper
   
   def index
-    couch_sandbox_list = Chef::Sandbox::cdb_list(true)
+    couch_sandbox_list = Chef::DBModel::Sandbox.names.all
     
     sandbox_list = Hash.new
     couch_sandbox_list.each do |sandbox|
@@ -40,13 +43,12 @@ class Sandboxes < Application
   end
 
   def show
-    begin
-      sandbox = Chef::Sandbox.cdb_load(params[:sandbox_id])
-    rescue Chef::Exceptions::CouchDBNotFound => e
+    unless sandbox = Chef::DBModel::Sandbox.by_name(params[:sandbox_id]).first
       raise NotFound, "Cannot find a sandbox named #{params[:sandbox_id]}"
     end
 
-    display sandbox
+    self.content_type = :json
+    sandbox.serialized_object
   end
  
   def create
@@ -57,8 +59,9 @@ class Sandboxes < Application
 
     new_sandbox = Chef::Sandbox.new
     result_checksums = Hash.new
-    
-    all_existing_checksums = Chef::Checksum.cdb_all_checksums
+
+    all_existing_checksums = Chef::DBModel::Checksum.checksums.all.inject({}) { |h,cksum| h[cksum.checksum] = 1; h }
+
     checksums.keys.each do |checksum|
       if all_existing_checksums[checksum]
         result_checksums[checksum] = {
@@ -72,19 +75,17 @@ class Sandboxes < Application
         new_sandbox.checksums << checksum
       end
     end
-    
+
     FileUtils.mkdir_p(sandbox_location(new_sandbox.guid))
     
-    new_sandbox.cdb_save
-    
+    db_object = Chef::DBModel::Sandbox.for(new_sandbox)
+    db_object.save!
+
     # construct successful response
     self.status = 201
     location = absolute_url(:sandbox, :sandbox_id => new_sandbox.guid)
     headers['Location'] = location
-    result = { 'uri' => location, 'checksums' => result_checksums, 'sandbox_id' => new_sandbox.guid }
-    #result = { 'uri' => location }
-    
-    display result
+    display 'uri' => location, 'checksums' => result_checksums, 'sandbox_id' => new_sandbox.guid
   end
   
   def upload_checksum
@@ -102,9 +103,9 @@ class Sandboxes < Application
   
   def update
     # look up the sandbox by its guid
-    existing_sandbox = Chef::Sandbox.cdb_load(params[:sandbox_id])
-    raise NotFound, "cannot find sandbox with guid #{sandbox_id}" unless existing_sandbox
-    
+    db_object = Chef::DBModel::Sandbox.by_name(params[:sandbox_id]).first
+    raise NotFound, "cannot find sandbox with guid #{sandbox_id}" unless db_object
+    existing_sandbox = db_object.domain_object
     raise BadRequest, "cannot update sandbox #{sandbox_id}: already complete" if existing_sandbox.is_completed
 
     if params[:is_completed]
@@ -130,8 +131,9 @@ class Sandboxes < Application
             checksum = Chef::Checksum.new(file_checksum)
 
             checksum.commit_sandbox_file(checksum_filename_in_sandbox)
+            Chef::DBModel::Checksum.for(checksum).save!
             
-            undo_steps << proc { checksum.revert_sandbox_file_commit }
+            undo_steps << proc { checksum.revert_sandbox_file_commit; Chef::DBModel::Checksum.for(checksum).delete }
           end
         rescue
           # undo the successful moves we did before
@@ -145,9 +147,10 @@ class Sandboxes < Application
       end
     end
     
-    existing_sandbox.cdb_save
+    db_object.update_from!(existing_sandbox)
 
-    display existing_sandbox
+    self.content_type = :json
+    db_object.serialized_object
   end
   
   def destroy

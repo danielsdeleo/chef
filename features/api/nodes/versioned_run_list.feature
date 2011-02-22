@@ -1,4 +1,4 @@
-@api @nodes @api_nodes
+@api @nodes @api_nodes @versioned_run_lists
 
 Feature: Versioned Run List
   In order to maintain multiple versions of a cookbook

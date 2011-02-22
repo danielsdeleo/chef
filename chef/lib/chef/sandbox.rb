@@ -26,8 +26,6 @@ class Chef
     
     alias :name :guid
     
-    attr_accessor :couchdb, :couchdb_id, :couchdb_rev
-
     # list of checksum ids
     attr_accessor :checksums
 
@@ -120,33 +118,6 @@ class Chef
         o.delete("_id")
       end
       sandbox
-    end
-
-    ##
-    # Couchdb
-    ##
-    
-    def self.create_design_document(couchdb=nil)
-      (couchdb || Chef::CouchDB.new).create_design_document("sandboxes", DESIGN_DOCUMENT)
-    end
-    
-    def self.cdb_list(inflate=false, couchdb=nil)
-      rs = (couchdb || Chef::CouchDB.new).list("sandboxes", inflate)
-      lookup = (inflate ? "value" : "key")
-      rs["rows"].collect { |r| r[lookup] }            
-    end
-
-    def self.cdb_load(guid, couchdb=nil)
-      # Probably want to look for a view here at some point
-      (couchdb || Chef::CouchDB.new).load("sandbox", guid)
-    end
-
-    def cdb_destroy
-      (couchdb || Chef::CouchDB.new).delete("sandbox", guid, @couchdb_rev)
-    end
-
-    def cdb_save(couchdb=nil)
-      @couchdb_rev = (couchdb || Chef::CouchDB.new).store("sandbox", guid, self)["rev"]
     end
 
   end

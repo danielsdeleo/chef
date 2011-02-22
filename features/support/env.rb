@@ -32,14 +32,25 @@ $:.unshift(CHEF_PROJECT_ROOT + '/chef-server-api/lib')
 $:.unshift(CHEF_PROJECT_ROOT + '/chef-server-webui/lib')
 $:.unshift(CHEF_PROJECT_ROOT + '/chef-solr/lib')
 
+def self.require(lib)
+  if lib =~ %r{(active_support/json|to_json)}
+    puts "refusing to load totally broken pointless code: #{lib}"
+  else
+    super
+  end
+end
+
 require 'chef'
 require 'chef/config'
 require 'chef/client'
 require 'chef/environment'
+require 'chef/db_model/environment'
 require 'chef/data_bag'
 require 'chef/data_bag_item'
 require 'chef/api_client'
 require 'chef/checksum'
+require 'chef/db_model/checksum'
+require 'chef/db_model/cookbook_version'
 require 'chef/sandbox'
 require 'chef/solr_query'
 require 'chef/certificate'
@@ -58,6 +69,20 @@ Ohai::Config[:disabled_plugins] << 'darwin::system_profiler' << 'darwin::kernel'
 Ohai::Config[:disabled_plugins ]<< 'darwin::uptime' << 'darwin::filesystem' << 'dmi' << 'lanuages' << 'perl' << 'python' << 'java'
 
 ENV['LOG_LEVEL'] ||= 'error'
+
+
+require 'active_record'
+DB_CONFIG = { :adapter  => "mysql",
+              :host     => "localhost",
+              :username => "root",
+              :database => "chef"}
+ActiveRecord::Base.establish_connection(DB_CONFIG)
+
+ActiveRecord::Base.logger = Chef::Log.logger
+
+require 'database_cleaner'
+require 'database_cleaner/cucumber'
+
 
 def setup_logging
   Chef::Config.from_file(File.join(File.dirname(__FILE__), '..', 'data', 'config', 'server.rb'))
@@ -119,20 +144,14 @@ def create_databases
   end
 
   cdb.create_id_map
-  Chef::Node.create_design_document
   Chef::Role.create_design_document
   Chef::DataBag.create_design_document
-  Chef::ApiClient.create_design_document
   Chef::WebUIUser.create_design_document
-  Chef::CookbookVersion.create_design_document
-  Chef::Sandbox.create_design_document
-  Chef::Checksum.create_design_document
-  Chef::Environment.create_design_document
 
   Chef::Certificate.generate_signing_ca
   Chef::Certificate.gen_validation_key
-  Chef::Certificate.gen_validation_key(Chef::Config[:web_ui_client_name], Chef::Config[:web_ui_key])
-  Chef::Environment.create_default_environment
+  Chef::Certificate.gen_validation_key(Chef::Config[:web_ui_client_name], Chef::Config[:web_ui_key], true)
+  Chef::DBModel::Environment.create_default_environment
   system("cp #{File.join(Dir.tmpdir, "chef_integration", "validation.pem")} #{Dir.tmpdir}")
   system("cp #{File.join(Dir.tmpdir, "chef_integration", "webui.pem")} #{Dir.tmpdir}")
   c = Chef::ApiClient.cdb_load(Chef::Config[:web_ui_client_name])
@@ -164,6 +183,12 @@ end
 setup_logging
 cleanup
 delete_databases
+
+
+DatabaseCleaner.logger = Chef::Log.logger
+DatabaseCleaner.clean_with(:truncation, :except => %w{api_clients environments})
+DatabaseCleaner.strategy = :truncation, {:except => %w[checksums api_clients cookbook_versions sandboxes environments]}
+
 create_databases
 prepare_replicas
 
@@ -271,33 +296,33 @@ module ChefWorld
 
   def admin_client
     unless @admin_client
-      r = Chef::REST.new(Chef::Config[:registration_url], Chef::Config[:validation_client_name], Chef::Config[:validation_key])
+      r = Chef::REST.new(Chef::Config[:registration_url], Chef::Config[:web_ui_client_name], Chef::Config[:web_ui_key])
       r.register("bobo", "#{tmpdir}/bobo.pem")
-      c = Chef::ApiClient.cdb_load("bobo")
+      c = Chef::DBModel::ApiClient.by_name("bobo").first.domain_object
       c.admin(true)
-      c.cdb_save
+      Chef::DBModel::ApiClient.for(c).save
       @admin_client = c
     end
   end
 
   def make_non_admin
-    r = Chef::REST.new(Chef::Config[:registration_url], Chef::Config[:validation_client_name], Chef::Config[:validation_key])
+    r = Chef::REST.new(Chef::Config[:registration_url], Chef::Config[:web_ui_client_name], Chef::Config[:web_ui_key])
     r.register("not_admin", "#{tmpdir}/not_admin.pem")
-    c = Chef::ApiClient.cdb_load("not_admin")
-    c.cdb_save
+    c = Chef::DBModel::ApiClient.by_name("not_admin").first.domain_object
     @rest = Chef::REST.new(Chef::Config[:registration_url], 'not_admin', "#{tmpdir}/not_admin.pem")
-    #Chef::Config[:client_key] = "#{tmpdir}/not_admin.pem"
-    #Chef::Config[:node_name] = "not_admin"
   end
 
   def couchdb_rest_client
     Chef::REST.new('http://localhost:5984/chef_integration', false, false)
   end
 
-
 end
 
 World(ChefWorld)
+
+FIXTURE_CHECKSUMS = Chef::DBModel::Checksum.find(:all, :select => 'id').map {|c| c.id }
+FIXTURE_COOKBOOKS = Chef::DBModel::CookbookVersion.find(:all, :select => 'id').map {|c| c.id }
+FIXTURE_ENVIRONMENTS = Chef::DBModel::Environment.find(:all, :select => 'id').map { |e| e.id }
 
 Before do
   data_tmp = File.join(File.dirname(__FILE__), "..", "data", "tmp")
@@ -317,6 +342,18 @@ Before do
 end
 
 After do
+
+  all_checksums = Chef::DBModel::Checksum.find(:all, :select => 'id').map {|c| c.id }
+  Chef::DBModel::Checksum.delete(all_checksums - FIXTURE_CHECKSUMS)
+
+  Chef::DBModel::ApiClient.delete_all("name NOT IN ('validator', 'chef-webui')")
+
+  all_cookbooks = Chef::DBModel::CookbookVersion.find(:all, :select => 'id').map {|c| c.id }
+  Chef::DBModel::CookbookVersion.delete(all_cookbooks - FIXTURE_COOKBOOKS)
+
+  all_environments = Chef::DBModel::Environment.find(:all, :select => 'id').map(&:id)
+  Chef::DBModel::Environment.delete(all_environments - FIXTURE_ENVIRONMENTS)
+
   gemserver.shutdown
   gemserver_thread && gemserver_thread.join
 

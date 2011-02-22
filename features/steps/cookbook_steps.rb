@@ -404,8 +404,9 @@ end
 
 Then /^the cookbook's checksums should be removed from couchdb$/ do
   #pp @last_uploaded_cookbook
-  all_checksum_docs = couchdb_rest_client.get_rest('/_design/checksums/_view/all')["rows"]
-  checksums_in_couchdb = all_checksum_docs.map {|c| c["key"]}
+  #all_checksum_docs = couchdb_rest_client.get_rest('/_design/checksums/_view/all')["rows"]
+  #checksums_in_couchdb = all_checksum_docs.map {|c| c["key"]}
+  checksums_in_couchdb = Chef::DBModel::Checksum.all.map(&:checksum)
   #pp :checksums_in_couchdb => checksums_in_couchdb
   @last_uploaded_cookbook.checksums.keys.each do |checksum|
     checksums_in_couchdb.should_not have_checksum_document(checksum)

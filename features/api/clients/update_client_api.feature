@@ -4,6 +4,7 @@ Feature: Update a client
   As a Developer
   I want to update my client via the API 
 
+  @fuuu
   Scenario: Update a client 
     Given I am an administrator
       And a 'client' named 'isis' exists

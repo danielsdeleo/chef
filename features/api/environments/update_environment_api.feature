@@ -21,9 +21,9 @@ Feature: Update an environment via the REST API
   Scenario: Update an environment that does not exist
     Given I am an administrator
       And an 'environment' named 'cucumber'
-      And sending the method 'description' to the 'environment' with 'This will not work'
+      And sending the method 'description' to the 'environment' with 'the RFC says create it.'
      When I 'PUT' the 'environment' to the path '/environments/cucumber'
-     Then I should get a '404 "Not Found"' exception
+     Then the inflated response should respond to 'description' with 'the RFC says create it.'
 
   Scenario: Update an environment with the wrong private key
     Given I am an administrator

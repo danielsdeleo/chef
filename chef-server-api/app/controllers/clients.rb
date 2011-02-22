@@ -29,24 +29,25 @@ class Clients < Application
   
   # GET /clients
   def index
-    @list = Chef::ApiClient.cdb_list(true)
-    display(@list.inject({}) { |result, element| result[element.name] = absolute_url(:client, :id => element.name); result })
+    @list = Chef::DBModel::ApiClient.names.all
+    display(@list.inject({}) { |result, client| result[client.name] = absolute_url(:client, :id => client.name); result })
   end
 
   # GET /clients/:id
   def show
-    begin
-      @client = Chef::ApiClient.cdb_load(params[:id])
-    rescue Chef::Exceptions::CouchDBNotFound => e
+    unless @client = Chef::DBModel::ApiClient.by_name(params[:id]).first
       raise NotFound, "Cannot load client #{params[:id]}"
     end
-    #display({ :name => @client.name, :admin => @client.admin, :public_key => @client.public_key })
-    display @client
+    self.content_type = :json
+    @client.serialized_object
   end
 
   # POST /clients
   def create
-    exists = true 
+    if Chef::DBModel::ApiClient.by_name(params[:name]).exists?
+      raise Conflict, "Client #{params[:name]} already exists"
+    end
+
     if params.has_key?(:inflated_object)
       params[:name] ||= params[:inflated_object].name
       # We can only get here if we're admin or the validator. Only
@@ -58,18 +59,12 @@ class Clients < Application
       end
     end
 
-    begin
-      Chef::ApiClient.cdb_load(params[:name])
-    rescue Chef::Exceptions::CouchDBNotFound
-      exists = false 
-    end
-    raise Conflict, "Client already exists" if exists
 
     @client = Chef::ApiClient.new
     @client.name(params[:name])
     @client.admin(params[:admin]) if params[:admin]
     @client.create_keys
-    @client.cdb_save
+    Chef::DBModel::ApiClient.for(@client).save!
     
     self.status = 201
     headers['Location'] = absolute_url(:client, @client.name)
@@ -78,16 +73,17 @@ class Clients < Application
 
   # PUT /clients/:id
   def update
+    unless Chef::DBModel::ApiClient.by_name(params[:id]).exists?
+      raise NotFound, "Cannot load client #{params[:id]}"
+    end
+
     if params.has_key?(:inflated_object)
       params[:private_key] ||= params[:inflated_object].private_key
       params[:admin] ||= params[:inflated_object].admin
     end
 
-    begin
-      @client = Chef::ApiClient.cdb_load(params[:id])
-    rescue Chef::Exceptions::CouchDBNotFound => e
-      raise NotFound, "Cannot load client #{params[:id]}"
-    end
+    @client = Chef::ApiClient.new
+    @client.name(params[:id])
     
     @client.admin(params[:admin]) unless params[:admin].nil?
 
@@ -98,19 +94,17 @@ class Clients < Application
       results[:private_key] = @client.private_key
     end
 
-    @client.cdb_save
+    Chef::DBModel::ApiClient.for(@client).save!
 
     display(results)
   end
 
   # DELETE /clients/:id
   def destroy
-    begin
-      @client = Chef::ApiClient.cdb_load(params[:id])
-    rescue Chef::Exceptions::CouchDBNotFound => e
+    unless @client = Chef::DBModel::ApiClient.by_name(params[:id]).first
       raise NotFound, "Cannot load client #{params[:id]}"
     end
-    @client.cdb_destroy
+    @client.delete
     display({ :name => @client.name })
   end
 

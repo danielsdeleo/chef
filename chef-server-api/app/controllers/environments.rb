@@ -19,6 +19,7 @@
 
 require 'chef/environment'
 require 'chef/cookbook_version_selector'
+require 'chef/db_model/environment'
 
 class Environments < Application
 
@@ -31,63 +32,56 @@ class Environments < Application
 
   # GET /environments
   def index
-    environment_list = Chef::Environment.cdb_list(true)
+    environment_list = Chef::DBModel::Environment.names.all
     display(environment_list.inject({}) { |res, env| res[env.name] = absolute_url(:environment, env.name); res })
   end
 
   # GET /environments/:id
   def show
-    begin
-      environment = Chef::Environment.cdb_load(params[:id])
-    rescue Chef::Exceptions::CouchDBNotFound => e
+    unless environment = Chef::DBModel::Environment.by_name(params[:id]).first
       raise NotFound, "Cannot load environment #{params[:id]}"
     end
-    environment.couchdb_rev = nil
-    display environment
+    self.content_type = :json
+    environment.serialized_object
   end
 
   # POST /environments
   def create
     env = params["inflated_object"]
-    exists = true
-    begin
-      Chef::Environment.cdb_load(env.name)
-    rescue Chef::Exceptions::CouchDBNotFound
-      exists = false
-    end
-    raise Conflict, "Environment already exists" if exists
+    db_object = Chef::DBModel::Environment.for(params["inflated_object"])
+    raise Conflict, "Environment already exists" unless db_object.new_record?
 
-    env.cdb_save
+    db_object.save!
     self.status = 201
     display({:uri => absolute_url(:environment, env.name)})
   end
 
   # PUT /environments/:id
   def update
-    raise MethodNotAllowed if params[:id] == "_default"
-    begin
-      env = Chef::Environment.cdb_load(params[:id])
-    rescue Chef::Exceptions::CouchDBNotFound
-      raise NotFound, "Cannot load environment #{params[:id]}"
+    if params[:id] == "_default"
+      raise MethodNotAllowed, "You cannot edit the _default environment"
     end
 
-    env.update_from!(params["inflated_object"])
-    env.cdb_save
-    env.couchdb_rev = nil
-    self.status = 200
-    display(env)
+    db_object = Chef::DBModel::Environment.for(params['inflated_object'])
+    self.status = db_object.new_record? ?  201 : 200
+    db_object.save!
+
+    self.content_type = :json
+    db_object.serialized_object
   end
 
   # DELETE /environments/:id
   def destroy
-    raise MethodNotAllowed if params[:id] == "_default"
-    begin
-      env = Chef::Environment.cdb_load(params[:id])
-    rescue Chef::Exceptions::CouchDBNotFound
+    if params[:id] == "_default"
+      raise MethodNotAllowed, "You cannot delete the _default environment"
+    end
+
+    unless env = Chef::DBModel::Environment.by_name(params[:id]).first
       raise NotFound, "Cannot load environment #{params[:id]}"
     end
-    env.cdb_destroy
-    display(env)
+    env.delete
+    self.content_type = :json
+    env.serialized_object
   end
 
   # GET /environments/:environment_id/cookbooks
@@ -98,17 +92,19 @@ class Environments < Application
   #   }
   # }
   def list_cookbooks
-    begin
-      filtered_cookbooks = Chef::Environment.cdb_load_filtered_cookbook_versions(params[:environment_id])
-    rescue Chef::Exceptions::CouchDBNotFound
+    unless @environment = Chef::DBModel::Environment.by_name(params[:environment_id]).first
       raise NotFound, "Cannot load environment #{params[:environment_id]}"
     end
+
     num_versions = num_versions!
-    display(filtered_cookbooks.inject({}) {|res, (cookbook_name,versions)|
+
+    cookbook_urls = @environment.filtered_cookbook_versions.inject({}) do |res, (cookbook_name,versions)|
       versions.map!{|v| v.version.to_s}
       res[cookbook_name] = expand_cookbook_urls(cookbook_name, versions, num_versions)
       res
-    })
+    end
+
+    display(cookbook_urls)
   end
 
   # GET /environments/:environment_id/cookbooks/:cookbook_id
@@ -120,11 +116,12 @@ class Environments < Application
   # }
   def cookbook
     cookbook_name = params[:cookbook_id]
-    begin
-      filtered_cookbooks = Chef::Environment.cdb_load_filtered_cookbook_versions(params[:environment_id])
-    rescue Chef::Exceptions::CouchDBNotFound
+
+    unless @environment = Chef::DBModel::Environment.by_name(params[:environment_id]).first
       raise NotFound, "Cannot load environment #{params[:environment_id]}"
     end
+    filtered_cookbooks = @environment.filtered_cookbook_versions
+
     raise NotFound, "Cannot load cookbook #{cookbook_name}" unless filtered_cookbooks.has_key?(cookbook_name)
     versions = filtered_cookbooks[cookbook_name].map{|v| v.version.to_s}
     num_versions = num_versions!("all")
@@ -133,13 +130,16 @@ class Environments < Application
 
   # GET /environments/:environment/recipes
   def list_recipes
-    display(Chef::Environment.cdb_load_filtered_recipe_list(params[:environment_id]))
+    display(Chef::Environment.filtered_recipe_list(params[:environment_id]))
   end
 
   # GET /environments/:environment_id/nodes
   def list_nodes
-    node_list = Chef::Node.cdb_list_by_environment(params[:environment_id])
-    display(node_list.inject({}) {|r,n| r[n] = absolute_url(:node, n); r})
+    node_list = Chef::DBModel::Node.names.by_env(params[:environment_id]).all
+    display(node_list.inject({}) do |response,node|
+      response[node.name] = absolute_url(:node, node.name)
+      response
+    end)
   end
 
   # GET /environments/:environment_id/roles/:role_id
@@ -152,6 +152,7 @@ class Environments < Application
     display("run_list" => role.env_run_lists[params[:environment_id]])
   end
 
+  # TODO: convert to nonosql
   # POST /environments/:environment_id/cookbook_versions
   #
   # Take the given run_list and return the versions of cookbooks that would

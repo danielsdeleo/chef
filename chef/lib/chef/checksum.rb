@@ -32,22 +32,6 @@ class Chef
     # to the pre-commit state.
     attr_reader :original_committed_file_location
 
-    DESIGN_DOCUMENT = {
-      "version" => 1,
-      "language" => "javascript",
-      "views" => {
-        "all" => {
-          "map" => <<-EOJS
-          function(doc) { 
-            if (doc.chef_type == "checksum") {
-              emit(doc.checksum, doc);
-            }
-          }
-          EOJS
-        },
-      }
-    }
-    
     # Creates a new Chef::Checksum object.
     # === Arguments
     # checksum::: the MD5 content hash of the file
@@ -77,15 +61,6 @@ class Chef
     def self.json_create(o)
       checksum = new(o['checksum'])
       checksum.create_time = o['create_time']
-
-      if o.has_key?('_rev')
-        checksum.couchdb_rev = o["_rev"]
-        o.delete("_rev")
-      end
-      if o.has_key?("_id")
-        checksum.couchdb_id = o["_id"]
-        o.delete("_id")
-      end
       checksum
     end
 
@@ -109,7 +84,6 @@ class Chef
       Chef::Log.info("Commiting sandbox file: move #{sandbox_file} to #{file_location}")
       FileUtils.mkdir_p(checksum_repo_directory)
       File.rename(sandbox_file, file_location)
-      cdb_save
     end
 
     # Moves the checksum file back to its pre-commit location and deletes
@@ -124,48 +98,13 @@ class Chef
 
       Chef::Log.warn("Reverting sandbox file commit: moving #{file_location} back to #{original_committed_file_location}")
       File.rename(file_location, original_committed_file_location)
-      cdb_destroy
     end
 
     # Removes the on-disk file backing this checksum object, then removes it
     # from the database
     def purge
       purge_file
-      cdb_destroy
     end
-
-    ##
-    # Couchdb
-    ##
-
-    def self.create_design_document(couchdb=nil)
-      (couchdb || Chef::CouchDB.new).create_design_document("checksums", DESIGN_DOCUMENT)
-    end
-    
-    def self.cdb_list(inflate=false, couchdb=nil)
-      rs = (couchdb || Chef::CouchDB.new).list("checksums", inflate)
-      lookup = (inflate ? "value" : "key")
-      rs["rows"].collect { |r| r[lookup] }        
-    end
-    
-    def self.cdb_all_checksums(couchdb = nil)
-      rs = (couchdb || Chef::CouchDB.new).list("checksums", true)
-      rs["rows"].inject({}) { |hash_result, r| hash_result[r['key']] = 1; hash_result }
-    end
-
-    def self.cdb_load(checksum, couchdb=nil)
-      # Probably want to look for a view here at some point
-      (couchdb || Chef::CouchDB.new).load("checksum", checksum)
-    end
-
-    def cdb_destroy(couchdb=nil)
-      (couchdb || Chef::CouchDB.new).delete("checksum", checksum, @couchdb_rev)
-    end
-
-    def cdb_save(couchdb=nil)
-      @couchdb_rev = (couchdb || Chef::CouchDB.new).store("checksum", checksum, self)["rev"]
-    end
-
 
     private
 

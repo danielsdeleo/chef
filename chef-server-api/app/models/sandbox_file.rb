@@ -17,6 +17,7 @@
 #
 
 require 'chef/sandbox'
+require 'chef/db_model/sandbox'
 require 'chef/exceptions'
 require 'chef/checksum_cache'
 
@@ -92,9 +93,8 @@ module ChefServerApi
     private
 
     def load_sandbox
-      @sandbox = Chef::Sandbox.cdb_load(@sandbox_id)
-    rescue Chef::Exceptions::CouchDBNotFound
-      @sandbox = nil
+      db_object = Chef::DBModel::Sandbox.by_name(@sandbox_id).first
+      @sandbox = db_object && db_object.domain_object
     end 
 
     def commit_stringio_to(destination_file_path)

@@ -17,9 +17,18 @@
 # limitations under the License.
 #
 
+def self.require(lib)
+  if lib =~ %r{(active_support/json|to_json)}
+    puts "refusing to load totally broken pointless code: #{lib}"
+  else
+    super
+  end
+end
+
 require 'chef/log'
 require 'chef/config'
 require 'chef/api_client'
+require 'chef/db_model/api_client'
 require 'openssl'
 require 'fileutils'
 
@@ -134,32 +143,31 @@ class Chef
         api_client.name(name)
         api_client.admin(admin)
         
-        begin
-          # If both the couch record and file exist, don't do anything. Otherwise,
-          # re-generate the validation key.
-          Chef::ApiClient.cdb_load(name)
-          
-          # The couch document was loaded successfully if we got to here; if we
-          # can't also load the file on the filesystem, we'll regenerate it all.
-          File.open(key_file, "r") do |file|
-          end
-        rescue Chef::Exceptions::CouchDBNotFound
-          create_validation_key(api_client, key_file)
-        rescue
-          if $!.class.name =~ /Errno::/
-            Chef::Log.error("Error opening validation key: #{$!} -- destroying and regenerating")
-            begin
-              api_client.cdb_destroy
-            rescue Bunny::ServerDownError => e
-              # create_validation_key is gonna fail anyway, so let's just bail out.
-              Chef::Log.fatal("Could not de-index (to rabbitmq) previous validation key - rabbitmq is down! Start rabbitmq then restart chef-server to re-generate it")
+        # If both the couch record and file exist, don't do anything. Otherwise,
+        # re-generate the validation key.
+        if client_record = Chef::DBModel::ApiClient.by_name(name).first
+          begin
+            # The couch document was loaded successfully if we got to here; if we
+            # can't also load the file on the filesystem, we'll regenerate it all.
+            File.open(key_file, "r") do |file|
+            end
+          rescue
+            if $!.class.name =~ /Errno::/
+              Chef::Log.error("Error opening validation key: #{$!} -- destroying and regenerating")
+              begin
+                client_record.destroy
+                create_validation_key(api_client, key_file)
+              rescue Bunny::ServerDownError => e
+                # create_validation_key is gonna fail anyway, so let's just bail out.
+                Chef::Log.fatal("Could not de-index (to rabbitmq) previous validation key - rabbitmq is down! Start rabbitmq then restart chef-server to re-generate it")
+                raise
+              end
+            else
               raise
             end
-            
-            create_validation_key(api_client, key_file)
-          else
-            raise
           end
+        else
+          create_validation_key(api_client, key_file)
         end
       end
       
@@ -169,7 +177,7 @@ class Chef
 
         api_client.create_keys
         begin
-          api_client.cdb_save
+          Chef::DBModel::ApiClient.for(api_client).save
         rescue Bunny::ServerDownError => e
           # If rabbitmq is down, the client will have been saved in CouchDB,
           # but not in the index.
