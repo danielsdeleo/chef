@@ -30,19 +30,6 @@ class Chef
     class File < Chef::Provider
       include Chef::Mixin::Checksum
 
-      def negative_complement(big)
-        if big > 1073741823 # Fixnum max
-          big -= (2**32) # diminished radix wrap to negative
-        end
-        big
-      end
-
-      def octal_mode(mode)
-        ((mode.respond_to?(:oct) ? mode.oct : mode.to_i) & 007777)
-      end
-
-      private :negative_complement, :octal_mode
-
       def load_current_resource
         @current_resource = Chef::Resource::File.new(@new_resource.name)
         @new_resource.path.gsub!(/\\/, "/") # for Windows
