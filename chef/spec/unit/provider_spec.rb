@@ -33,6 +33,10 @@ describe Chef::Provider do
     @provider.new_resource.should eql(@resource)
   end
 
+  it "has a resource update" do
+    @provider.resource_update.should be_a_kind_of Chef::Provider::ResourceUpdate
+  end
+
   it "should store the node passed to new as node" do
     @provider.node.should eql(@node)
   end
@@ -43,6 +47,14 @@ describe Chef::Provider do
 
   it "should return true for action_nothing" do
     @provider.action_nothing.should eql(true)
+  end
+
+  it "allows subclasses to implement current state snapshots" do
+    @provider.should respond_to(:record_current_state)
+  end
+
+  it "allows subclasses to implement snapshots of updated state" do
+    @provider.should respond_to(:record_updated_state)
   end
 
   it "evals embedded recipes with a pristine resource collection" do

@@ -32,12 +32,20 @@ describe Chef::RunContext do
     @run_context = Chef::RunContext.new(@node, @cookbook_collection)
   end
 
-  it "has a cookbook collection" do
-    @run_context.cookbook_collection.should == @cookbook_collection
-  end
+  describe "when first created" do
 
-  it "has a node" do
-    @run_context.node.should == @node
+    it "has a cookbook collection" do
+      @run_context.cookbook_collection.should == @cookbook_collection
+    end
+
+    it "has a node" do
+      @run_context.node.should == @node
+    end
+
+    it "has an empty list of resource updates" do
+      @run_context.resource_updates.should be_empty
+    end
+
   end
 
   describe "after loading the cookbooks" do

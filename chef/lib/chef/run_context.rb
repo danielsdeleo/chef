@@ -31,7 +31,21 @@ class Chef
     # Used to load the node's recipes after expanding its run list
     include Chef::Mixin::LanguageIncludeRecipe
 
-    attr_reader :node, :cookbook_collection, :definitions
+    # The Chef::Node object for this chef-client (or chef-solo) run
+    attr_reader :node
+
+    # A Hash of cookbook name <String> => cookbook <Chef::CookbookVersion>
+    # containing the cookbooks available to the client for this run
+    attr_reader :cookbook_collection
+
+    # Hash mapping the DSL names of resource definitions to the corresponding
+    # Chef::ResouceDefinition objects. The collection is empty until #load has
+    # been called.
+    attr_reader :definitions
+
+    # An Array containing the Chef::ResourceUpdate objects representing updates
+    # that have been made on the client.
+    attr_reader :resource_updates
 
     # Needs to be settable so deploy can run a resource_collection independent
     # of any cookbooks.
@@ -46,6 +60,7 @@ class Chef
       @node = node
       @cookbook_collection = cookbook_collection
       @resource_collection = Chef::ResourceCollection.new
+      @resource_updates = []
       @definitions = Hash.new
 
       # TODO: 5/18/2010 cw/timh - See note on Chef::Node's

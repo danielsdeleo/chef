@@ -22,18 +22,25 @@ require 'chef/mixin/convert_to_class_name'
 require 'chef/mixin/recipe_definition_dsl_core'
 require 'chef/mixin/enforce_ownership_and_permissions'
 
+require 'chef/provider/resource_update'
+
 class Chef
   class Provider
 
     include Chef::Mixin::RecipeDefinitionDSLCore
     include Chef::Mixin::EnforceOwnershipAndPermissions
 
-    attr_accessor :new_resource, :current_resource, :run_context
+    attr_accessor :new_resource
+    attr_accessor :current_resource
+    attr_accessor :run_context
+
+    attr_reader :resource_update
 
     def initialize(new_resource, run_context)
       @new_resource = new_resource
       @current_resource = nil
       @run_context = run_context
+      @resource_update = ResourceUpdate.new
     end
 
     def node
@@ -47,6 +54,29 @@ class Chef
 
     def cookbook_name
       new_resource.cookbook_name
+    end
+
+    def run_action(action)
+      load_current_resource
+      record_current_state
+      # assume updated state will be as specified in new_resource
+      record_updated_state
+      send("action_#{action}")
+    end
+
+    # Add a snapshot of the current (before change) state of the resource to
+    # the +resource_update+
+    def record_current_state
+      # LWRPs or other hacky providers may not have a current resource
+      unless current_resource.nil?
+        resource_update.initial_state_from_resource(current_resource)
+      end
+    end
+
+    # Add a snapshot of the updated (after change) state of the resource to the
+    # +resource_update+
+    def record_updated_state
+      resource_update.updated_state_from_resource(new_resource)
     end
 
     def load_current_resource

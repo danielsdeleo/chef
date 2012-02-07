@@ -39,12 +39,12 @@ class Chef
       attr_accessor :final_properties
       attr_accessor :event_data # e.g., a diff.
 
-      def initial_state_from_resource(resource)
-        @initial_properties = resource.to_hash
+      def initial_state_from_resource(current_resource)
+        @initial_properties = current_resource.state
       end
 
-      def updated_state_from_resource(resource)
-        @final_properties = resource.to_hash
+      def updated_state_from_resource(new_resource)
+        @final_properties = new_resource.state
       end
 
     end
