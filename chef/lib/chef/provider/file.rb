@@ -20,6 +20,7 @@ require 'chef/config'
 require 'chef/log'
 require 'chef/resource/file'
 require 'chef/mixin/checksum'
+require 'chef/scan_access_control'
 require 'chef/provider'
 require 'etc'
 require 'fileutils'
@@ -46,6 +47,7 @@ class Chef
         @current_resource = Chef::Resource::File.new(@new_resource.name)
         @new_resource.path.gsub!(/\\/, "/") # for Windows
         @current_resource.path(@new_resource.path)
+        ScanAccessControl.new(@new_resource, @current_resource).set_all!
         @current_resource
       end
 

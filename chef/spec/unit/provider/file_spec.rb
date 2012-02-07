@@ -43,6 +43,28 @@ describe Chef::Provider::File do
     @provider.node.should eql(@node)
   end
 
+  describe "when the specified file exists" do
+    before do
+      @resource.path("/etc/foo.conf")
+      @resource.user(1000)
+      @resource.group(1000)
+      @resource.mode("0644")
+      @file_stat = mock("File Stat struct for /etc/foo.conf", :uid => 0, :gid => 0, :mode => 00755)
+      # Would prefer not to have to stub all instances but we don't have
+      # a good avenue to use DI instead :(
+      Chef::ScanAccessControl.any_instance.stub(:stat).and_return(@file_stat)
+      File.should_receive(:exist?).with("/etc/foo.conf").and_return(true)
+    end
+
+    it "updates current_resource with the access control settings for the current file" do
+      @provider.load_current_resource
+      cr = @provider.current_resource
+      cr.user.should == 0
+      cr.group.should == 0
+      cr.mode.should == "755"
+    end
+  end
+
   it "should load a current resource based on the one specified at construction" do
     @provider.load_current_resource
     @provider.current_resource.should be_a_kind_of(Chef::Resource::File)
