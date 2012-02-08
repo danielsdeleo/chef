@@ -49,6 +49,10 @@ describe Chef::Provider do
     @provider.action_nothing.should eql(true)
   end
 
+  it "has no currently executing action" do
+    @provider.executing_action.should be_nil
+  end
+
   it "allows subclasses to implement current state snapshots" do
     @provider.should respond_to(:record_current_state)
   end
@@ -73,4 +77,18 @@ describe Chef::Provider do
     snitch = Proc.new {temporary_collection = @run_context.resource_collection}
     @provider.send(:recipe_eval, &snitch)
   end
+
+  describe "after running an action" do
+    before do
+      def @provider.load_current_resource
+      end
+      @provider.run_action(:nothing)
+    end
+
+    it "sets the executing action to the executed action" do
+      @provider.executing_action.should == :nothing
+    end
+
+  end
+
 end

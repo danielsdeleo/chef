@@ -34,9 +34,11 @@ class Chef
     attr_accessor :current_resource
     attr_accessor :run_context
 
+    attr_reader :executing_action
     attr_reader :resource_update
 
     def initialize(new_resource, run_context)
+      @executing_action = nil
       @new_resource = new_resource
       @current_resource = nil
       @run_context = run_context
@@ -57,6 +59,7 @@ class Chef
     end
 
     def run_action(action)
+      @executing_action = action
       load_current_resource
       record_current_state
       # assume updated state will be as specified in new_resource
