@@ -71,7 +71,7 @@ F
 
     end
 
-    FORBIDDEN_IVARS = [:@run_context, :@node, :@not_if, :@only_if]
+    FORBIDDEN_IVARS = [:@run_context, :@node, :@not_if, :@only_if, :@status]
     HIDDEN_IVARS = [:@allowed_actions, :@resource_name, :@source_line, :@run_context, :@name, :@node]
 
     include Chef::Mixin::CheckHelper
@@ -123,6 +123,20 @@ F
       end
     end
 
+    # A list of symbols that will be considered valid values of the status
+    # attribute.
+    #--
+    # NB: For some kinds of resources, notably Service resources, the status of
+    # a resource can logically be multi-valued, e.g., a service can be
+    # enabled/disabled and running/stopped. For now we're only supporting a
+    # single value of status, so the value needs to be set according to the
+    # action we're running on the service.
+    def self.valid_status_names(*valid_status_names)
+      @valid_status_names ||= []
+      @valid_status_names = valid_status_names unless valid_status_names.empty?
+      @valid_status_names
+    end
+
     attr_accessor :params
     attr_accessor :provider
     attr_accessor :allowed_actions
@@ -139,6 +153,8 @@ F
     attr_reader :resource_name
     attr_reader :not_if_args
     attr_reader :only_if_args
+
+    attr_reader :status
 
     # Each notify entry is a resource/action pair, modeled as an
     # Struct with a #resource and #action member
@@ -165,6 +181,7 @@ F
       @immediate_notifications = Array.new
       @delayed_notifications = Array.new
       @source_line = nil
+      @status = nil
 
       @node = run_context ? deprecated_ivar(run_context.node, :node, :warn) : nil
     end
@@ -188,6 +205,16 @@ F
       end
     end
 
+    # Set the status attribute on this resource. +new_status+ should be a
+    # Symbol describing the state of the resource; it must also match a
+    # previously declared valid status name (see: Resource.valid_status_names)
+    def status=(new_status)
+      unless self.class.valid_status_names.include?(new_status)
+        raise ArgumentError, "`#{new_status}` is not a valid status for #{self.class} resources "\
+          "(valid status names are [#{self.class.valid_status_names.join(',')}]"
+      end
+      @status = new_status
+    end
 
     def updated=(true_or_false)
       Chef::Log.warn("Chef::Resource#updated=(true|false) is deprecated. Please call #updated_by_last_action(true|false) instead.")

@@ -146,6 +146,38 @@ describe Chef::Resource do
     end
   end
 
+  describe "describing resource status" do
+    it "has no valid status names by default" do
+      Chef::Resource.valid_status_names.should be_empty
+    end
+
+    describe "when a list of valid status names has been set" do
+
+      before do
+        @resource_class = Class.new(Chef::Resource) do
+          valid_status_names(:enabled, :disabled, :running, :stopped)
+        end
+      end
+
+      it "lists valid status names" do
+        @resource_class.valid_status_names.should =~ [:enabled, :disabled, :running, :stopped]
+      end
+
+      it "sets the status of a resource to a valid value" do
+        @resource_instance = @resource_class.new("random-resource")
+        @resource_instance.status = :enabled
+        @resource_instance.status.should == :enabled
+      end
+
+      it "does not set the status to an invalid value" do
+        @resource_instance = @resource_class.new("some-resource")
+        lambda { @resource_instance.status = :barf }.should raise_error(ArgumentError)
+      end
+
+    end
+
+  end
+
   describe "load_prior_resource" do
     before(:each) do
       @prior_resource = Chef::Resource.new("funk")
