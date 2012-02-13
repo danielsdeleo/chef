@@ -42,7 +42,7 @@ class Chef
       @new_resource = new_resource
       @current_resource = nil
       @run_context = run_context
-      @resource_update = ResourceUpdate.new
+      @resource_update = nil
     end
 
     def node
@@ -60,26 +60,18 @@ class Chef
 
     def run_action(action)
       @executing_action = action
-      load_current_resource
-      record_current_state
-      # assume updated state will be as specified in new_resource
-      record_updated_state
-      send("action_#{action}")
-    end
+      @resource_update = ResourceUpdate.new(@new_resource)
 
-    # Add a snapshot of the current (before change) state of the resource to
-    # the +resource_update+
-    def record_current_state
-      # LWRPs or other hacky providers may not have a current resource
-      unless current_resource.nil?
-        resource_update.initial_state_from_resource(current_resource)
+      @resource_update.run_action do
+        load_current_resource
+        @resource_update.initial_state_from_resource(@current_resource)
+        send("action_#{action}")
       end
-    end
 
-    # Add a snapshot of the updated (after change) state of the resource to the
-    # +resource_update+
-    def record_updated_state
-      resource_update.updated_state_from_resource(new_resource)
+      if @new_resource.updated_by_last_action?
+        @run_context.resource_updated(@resource_update)
+      end
+
     end
 
     def load_current_resource

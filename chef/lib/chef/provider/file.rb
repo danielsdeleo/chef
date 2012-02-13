@@ -22,6 +22,7 @@ require 'chef/resource/file'
 require 'chef/mixin/checksum'
 require 'chef/scan_access_control'
 require 'chef/provider'
+require 'chef/diff'
 require 'etc'
 require 'fileutils'
 
@@ -30,10 +31,16 @@ class Chef
     class File < Chef::Provider
       include Chef::Mixin::Checksum
 
+      def initialize(*args)
+        super
+        @backup_path = nil
+      end
+
       def load_current_resource
         @current_resource = Chef::Resource::File.new(@new_resource.name)
         @new_resource.path.gsub!(/\\/, "/") # for Windows
         @current_resource.path(@new_resource.path)
+        @current_resource.status = ::File.exist?(@new_resource.path) ? :exists : :nonexistent
         ScanAccessControl.new(@new_resource, @current_resource).set_all!
         @current_resource
       end
@@ -48,7 +55,12 @@ class Chef
         unless compare_content
           backup @new_resource.path if ::File.exists?(@new_resource.path)
           ::File.open(@new_resource.path, "w") {|f| f.write @new_resource.content }
+          unless @backup_path.nil?
+            differ = Diff.new(@backup_path, @new_resource.path)
+            resource_update.event_data = differ.diff
+          end
           Chef::Log.info("#{@new_resource} contents updated")
+          resource_update.status = :updated
           @new_resource.updated_by_last_action(true)
         end
       end
@@ -59,9 +71,11 @@ class Chef
           ::File.open(@new_resource.path, "w+") {|f| f.write @new_resource.content }
           @new_resource.updated_by_last_action(true)
           Chef::Log.info("#{@new_resource} created file #{@new_resource.path}")
+          resource_update.status = :created
         else
           set_content unless @new_resource.content.nil?
         end
+        @new_resource.status = :exists
         enforce_ownership_and_permissions
       end
 
@@ -84,6 +98,8 @@ class Chef
             raise "Cannot delete #{@new_resource} at #{@new_resource_path}!"
           end
         end
+        resource_update.status = :deleted
+        @new_resource.status = :nonexistent
       end
 
       def action_touch
@@ -105,10 +121,10 @@ class Chef
           # keeping the backup in the same directory. We also need to to_s it
           # so we don't get a type error around implicit to_str conversions.
           prefix = Chef::Config[:file_backup_path].to_s
-          backup_path = ::File.join(prefix, backup_filename)
-          FileUtils.mkdir_p(::File.dirname(backup_path)) if Chef::Config[:file_backup_path]
-          FileUtils.cp(file, backup_path, :preserve => true)
-          Chef::Log.info("#{@new_resource} backed up to #{backup_path}")
+          @backup_path = ::File.join(prefix, backup_filename)
+          FileUtils.mkdir_p(::File.dirname(@backup_path)) if Chef::Config[:file_backup_path]
+          FileUtils.cp(file, @backup_path, :preserve => true)
+          Chef::Log.info("#{@new_resource} backed up to #{@backup_path}")
 
           # Clean up after the number of backups
           slice_number = @new_resource.backup

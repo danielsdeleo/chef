@@ -20,6 +20,7 @@
 require 'chef/provider/file'
 require 'chef/mixin/template'
 require 'chef/mixin/checksum'
+require 'chef/diff'
 require 'chef/file_access_control'
 
 class Chef
@@ -38,16 +39,24 @@ class Chef
       def action_create
         render_with_context(template_location) do |rendered_template|
           rendered(rendered_template)
-          if ::File.exist?(@new_resource.path) && content_matches?
+          file_exists = ::File.exist?(@new_resource.path)
+          if file_exists && content_matches?
             Chef::Log.debug("#{@new_resource} content has not changed.")
             set_all_access_controls(@new_resource.path)
+            resource.status = :updated if @new_resource.updated_by_last_action?
           else
             backup
             set_all_access_controls(rendered_template.path)
+
+            differ = Diff.new(@new_resource.path, rendered_template.path)
+            resource_update.event_data = differ.diff
+
             FileUtils.mv(rendered_template.path, @new_resource.path)
             Chef::Log.info("#{@new_resource} updated content")
+            resource_update.status = file_exists ? :created : :updated
             @new_resource.updated_by_last_action(true)
           end
+          @new_resource.status = :exists
         end
       end
 

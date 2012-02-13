@@ -31,6 +31,8 @@ class Chef
       # TODO: fix for windows :/
       state_attrs :checksum, :owner, :group, :mode
 
+      valid_status_names :exists, :nonexistent
+
       provides :file, :on_platforms => :all
 
       def initialize(name, run_context=nil)

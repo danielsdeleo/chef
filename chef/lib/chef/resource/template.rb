@@ -26,6 +26,8 @@ class Chef
     class Template < Chef::Resource::File
       include Chef::Mixin::Securable
 
+      valid_status_names :exists, :nonexistent
+
       provides :template, :on_platforms => :all
 
       def initialize(name, run_context=nil)

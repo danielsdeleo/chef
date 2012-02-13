@@ -88,6 +88,9 @@ class Chef
       end
     end
 
+    def resource_updated(resource_update)
+      @resource_updates << resource_update
+    end
 
     private
 
