@@ -54,6 +54,7 @@ class Chef
 
       # Failed to register this client with the server.
       def registration_failed(node_name, exception, config)
+        super
       end
 
       def node_load_start(node_name, config)
@@ -128,6 +129,7 @@ class Chef
       end
 
       def file_load_failed(path, exception)
+        super
       end
 
       # Called when recipes have been loaded.
