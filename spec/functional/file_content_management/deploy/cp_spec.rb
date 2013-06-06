@@ -46,6 +46,15 @@ shared_examples_for "a content deploy strategy" do
       file_info.should be_file
       normalize_mode(file_info.mode).should == default_mode
     end
+
+    it "touches the file to create it (Windows)", :windows_only do
+      content_deployer.create(target_file_path)
+      File.should exist(target_file_path)
+      file_info = File.stat(target_file_path)
+      file_info.should be_owned
+      file_info.should be_file
+      # What default permissions do we expect?
+    end
   end
 
   describe "updating the file" do
@@ -67,6 +76,14 @@ shared_examples_for "a content deploy strategy" do
       end
     end
 
+    def win_invariant_properties(sec_obj)
+      descriptor = sec_obj.security_descriptor(true)
+      security_descriptor_invariants.inject({}) do |prop_map, property|
+        prop_map[property] = descriptor.send(property)
+        prop_map
+       end
+    end
+
     before do
       content_deployer.create(target_file_path)
     end
@@ -77,6 +94,14 @@ shared_examples_for "a content deploy strategy" do
       updated_info = File.stat(target_file_path)
 
       unix_invariant_properies(original_info).should == unix_invariant_properies(updated_info)
+    end
+
+    it "maintains invariant properties on Windows", :windows_only do
+      original_info = Chef::ReservedNames::Win32::Security::SecurableObject.new(target_file_path)
+      content_deployer.deploy(staging_file_path, target_file_path)
+      updated_info = Chef::ReservedNames::Win32::Security::SecurableObject.new(target_file_path)
+
+      win_invariant_properties(original_info).should == win_invariant_properties(updated_info)
     end
 
     it "updates the target with content from staged" do
@@ -114,6 +139,14 @@ describe Chef::FileContentManagement::Deploy::Cp do
     ]
   end
 
+  let(:security_descriptor_invariants) do
+    [
+      :owner,
+      :group,
+      :dacl
+    ]
+  end
+
   it_should_behave_like "a content deploy strategy"
 
 end
@@ -132,3 +165,19 @@ describe Chef::FileContentManagement::Deploy::MvUnix, :unix_only do
 end
 
 
+describe Chef::FileContentManagement::Deploy::MvWindows, :windows_only do
+
+  context "when a file has no sacl" do
+
+    let(:security_descriptor_invariants) do
+      [
+       :owner,
+       :group,
+       :dacl
+      ]
+    end
+
+    it_should_behave_like "a content deploy strategy"
+  end
+
+end
